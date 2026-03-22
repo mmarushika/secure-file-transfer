@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { fileAPI, FileData } from '../services/api';
-import { Upload, Download, Share2, Trash2, File as FileIcon } from 'lucide-react';
+import { fileAPI, FileData, User, authAPI } from '../services/api';
+import { Upload, Download, Share2, Trash2, File as FileIcon, X } from 'lucide-react';
 
 const MyFiles: React.FC = () => {
   const [files, setFiles] = useState<FileData[]>([]);
@@ -9,10 +9,22 @@ const MyFiles: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [shareEmail, setShareEmail] = useState('');
   const [sharingFileId, setSharingFileId] = useState<string | null>(null);
+  const [shares, setShares] = useState<{[key: string]: string[]}>({}); // fileId -> email[]
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   useEffect(() => {
     loadFiles();
+    loadCurrentUser();
   }, []);
+
+  const loadCurrentUser = async () => {
+    try {
+      const response = await authAPI.getCurrentUser();
+      setCurrentUser(response.data);
+    } catch (error) {
+      console.error('Failed to load current user:', error);
+    }
+  };
 
   const loadFiles = async () => {
     try {
@@ -59,13 +71,78 @@ const MyFiles: React.FC = () => {
   const handleShare = async (fileId: string) => {
     if (!shareEmail) return;
 
+    // Prevent sharing with self
+    if (currentUser && shareEmail.toLowerCase() === currentUser.email.toLowerCase()) {
+      alert('You cannot share files with yourself.');
+      return;
+    }
+
     try {
       await fileAPI.shareFile(fileId, shareEmail);
       setShareEmail('');
-      setSharingFileId(null);
+      // Refresh shares to show the newly added share
+      await loadShares(fileId);
       alert('File shared successfully!');
     } catch (error: any) {
       alert(error.response?.data?.detail || 'Failed to share file');
+    }
+  };
+
+  const loadShares = async (fileId: string) => {
+    try {
+      console.log('Loading shares for file:', fileId);
+      const response = await fileAPI.getFileShares(fileId);
+      console.log('Shares response:', response.data);
+      setShares(prev => ({
+        ...prev,
+        [fileId]: response.data.shares
+      }));
+      console.log('Updated shares state:', response.data.shares);
+    } catch (error: any) {
+      console.error('Failed to load shares:', error);
+      console.error('Error response:', error.response?.data);
+    }
+  };
+
+  const toggleShareInterface = (fileId: string) => {
+    const newSharingFileId = sharingFileId === fileId ? null : fileId;
+    setSharingFileId(newSharingFileId);
+    
+    // Always load shares when opening the share interface
+    if (newSharingFileId) {
+      loadShares(newSharingFileId);
+    }
+  };
+
+  const handleDelete = async (fileId: string, filename: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${filename}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await fileAPI.deleteFile(fileId);
+      loadFiles();
+      alert('File deleted successfully!');
+    } catch (error: any) {
+      alert(error.response?.data?.detail || 'Failed to delete file');
+    }
+  };
+
+  const handleUnshare = async (fileId: string, email: string) => {
+    if (!window.confirm(`Are you sure you want to unshare this file with ${email}?`)) {
+      return;
+    }
+
+    try {
+      await fileAPI.unshareFile(fileId, email);
+      // Update the shares state to remove the unshared email
+      setShares(prev => ({
+        ...prev,
+        [fileId]: prev[fileId].filter(e => e !== email)
+      }));
+      alert('File unshared successfully!');
+    } catch (error: any) {
+      alert(error.response?.data?.detail || 'Failed to unshare file');
     }
   };
 
@@ -166,39 +243,74 @@ const MyFiles: React.FC = () => {
                             <Download className="h-5 w-5" />
                           </button>
                           <button
-                            onClick={() => setSharingFileId(sharingFileId === file.id ? null : file.id)}
+                            onClick={() => toggleShareInterface(file.id)}
                             className="p-2 text-gray-600 hover:text-green-600"
                             title="Share"
                           >
                             <Share2 className="h-5 w-5" />
                           </button>
+                          <button
+                            onClick={() => handleDelete(file.id, file.original_filename)}
+                            className="p-2 text-gray-600 hover:text-red-600"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-5 w-5" />
+                          </button>
                         </div>
                       </div>
                       
                       {sharingFileId === file.id && (
-                        <div className="mt-4 flex items-center space-x-2">
-                          <input
-                            type="email"
-                            placeholder="Enter email to share with"
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                            value={shareEmail}
-                            onChange={(e) => setShareEmail(e.target.value)}
-                          />
-                          <button
-                            onClick={() => handleShare(file.id)}
-                            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-                          >
-                            Share
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSharingFileId(null);
-                              setShareEmail('');
-                            }}
-                            className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
-                          >
-                            Cancel
-                          </button>
+                        <div className="mt-4 space-y-3">
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="email"
+                              placeholder="Enter email to share with"
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                              value={shareEmail}
+                              onChange={(e) => setShareEmail(e.target.value)}
+                            />
+                            <button
+                              onClick={() => handleShare(file.id)}
+                              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                            >
+                              Share
+                            </button>
+                            <button
+                              onClick={() => {
+                                setSharingFileId(null);
+                                setShareEmail('');
+                              }}
+                              className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                          
+                          {/* Show current shares */}
+                          <div className="border-t pt-3">
+                            <p className="text-sm text-gray-600 mb-2">Shared with:</p>
+                            {shares[file.id] && shares[file.id].length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {shares[file.id].map((email) => (
+                                  <div
+                                    key={email}
+                                    className="flex items-center gap-1 bg-gray-100 px-3 py-1 rounded-full text-sm"
+                                  >
+                                    <span>{email}</span>
+                                    <button
+                                      onClick={() => handleUnshare(file.id, email)}
+                                      className="text-red-500 hover:text-red-700"
+                                      title="Unshare"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-400 italic">No shares yet</p>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>

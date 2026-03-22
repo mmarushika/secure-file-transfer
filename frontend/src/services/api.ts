@@ -73,6 +73,15 @@ export const fileAPI = {
   shareFile: (fileId: string, email: string) =>
     api.post(`/files/${fileId}/share`, { email }),
   
+  deleteFile: (fileId: string) =>
+    api.delete(`/files/${fileId}`),
+  
+  getFileShares: (fileId: string) =>
+    api.get<{shares: string[]}>(`/files/${fileId}/shares`),
+  
+  unshareFile: (fileId: string, email: string) =>
+    api.delete(`/files/${fileId}/share/${email}`),
+  
   getSharedFiles: () =>
     api.get<FileData[]>('/shared-files'),
 };

@@ -312,6 +312,93 @@ async def list_shared_files(current_user: User = Depends(get_current_user), db: 
             ))
     return files
 
+@app.get("/files/{file_id}/shares")
+async def get_file_shares(
+    file_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    print(f"Getting shares for file {file_id} by user {current_user.email}")
+    
+    file_record = db.query(FileModel).filter(FileModel.id == file_id).first()
+    if not file_record:
+        print(f"File {file_id} not found")
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    if file_record.owner_id != current_user.id:
+        print(f"User {current_user.email} is not owner of file {file_id}")
+        raise HTTPException(status_code=403, detail="Only file owner can view shares")
+    
+    shares = db.query(SharedFile).filter(SharedFile.file_id == file_id).all()
+    print(f"Found {len(shares)} shares for file {file_id}")
+    share_emails = []
+    for share in shares:
+        user = db.query(User).filter(User.id == share.shared_with_id).first()
+        if user:
+            share_emails.append(user.email)
+            print(f"Share found: {user.email}")
+    
+    print(f"Returning shares: {share_emails}")
+    return {"shares": share_emails}
+
+@app.delete("/files/{file_id}")
+async def delete_file(
+    file_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    file_record = db.query(FileModel).filter(FileModel.id == file_id).first()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    if file_record.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only file owner can delete files")
+    
+    # Delete the encrypted file from disk
+    file_path = os.path.join(UPLOAD_DIR, f"{file_id}.enc")
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    
+    # Delete all shares of this file
+    db.query(SharedFile).filter(SharedFile.file_id == file_id).delete()
+    
+    # Delete the file record
+    db.delete(file_record)
+    db.commit()
+    
+    return {"message": "File deleted successfully"}
+
+@app.delete("/files/{file_id}/share/{user_email}")
+async def unshare_file(
+    file_id: str,
+    user_email: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    file_record = db.query(FileModel).filter(FileModel.id == file_id).first()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    if file_record.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only file owner can unshare files")
+    
+    target_user = db.query(User).filter(User.email == user_email).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    shared_file = db.query(SharedFile).filter(
+        SharedFile.file_id == file_id,
+        SharedFile.shared_with_id == target_user.id
+    ).first()
+    
+    if not shared_file:
+        raise HTTPException(status_code=404, detail="File not shared with this user")
+    
+    db.delete(shared_file)
+    db.commit()
+    
+    return {"message": f"File unshared successfully with {target_user.email}"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
