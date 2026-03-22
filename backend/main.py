@@ -225,6 +225,11 @@ async def download_file(
         ).first()
         if not shared_file:
             raise HTTPException(status_code=403, detail="Access denied")
+        # Use the shared file's encrypted AES key
+        encrypted_aes_key = base64.b64decode(shared_file.encrypted_aes_key)
+    else:
+        # Owner downloading their own file
+        encrypted_aes_key = base64.b64decode(file_record.encrypted_aes_key)
     
     file_path = os.path.join(UPLOAD_DIR, f"{file_id}.enc")
     if not os.path.exists(file_path):
@@ -233,7 +238,6 @@ async def download_file(
     with open(file_path, "rb") as f:
         encrypted_content = f.read()
     
-    encrypted_aes_key = base64.b64decode(file_record.encrypted_aes_key)
     iv = base64.b64decode(file_record.iv)
     
     try:
